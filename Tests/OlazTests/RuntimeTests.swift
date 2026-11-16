@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import AppKit
 @testable import Olaz
 
 /// The bridge must reproduce Node's crypto byte-for-byte: the official renderer
@@ -137,5 +138,29 @@ import Foundation
             let names = storage.cookies(for: URL(string: host)!)?.map(\.name) ?? []
             #expect(names.contains("zpw_sek"), "missing zpw_sek for \(host)")
         }
+    }
+}
+
+/// Ảnh QR đăng nhập trang gửi sang: QR1 từ máy chủ là PNG base64, còn QR2 trang tự sinh (`T()` trong
+/// login-startup) là SVG percent-encode. Đọc sai QR2 thì màn giữ QR1 đã dùng và điện thoại báo "Mã QR không hợp lệ".
+@MainActor
+@Suite struct LoginQRDataURL {
+    @Test func base64PNGDecodes() {
+        let png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+        #expect(ZaloEngine.decodeDataURL("data:image/png;base64," + png.base64EncodedString()) == png)
+    }
+
+    @Test func selfGeneratedSVGDecodesToAnImage() throws {
+        let svg = #"<svg xmlns="http://www.w3.org/2000/svg" version="1.1" fill="white" width="480" height="480" viewBox="0 0 480 480"><rect width="100%" height="100%" fill="white"/><rect style="fill:black;" x="48" y="48" width="48" height="48"/></svg>"#
+        // Mã hoá như `encodeURIComponent` của JS.
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_.!~*'()"))
+        let url = "data:image/svg+xml;utf8," + svg.addingPercentEncoding(withAllowedCharacters: allowed)!
+        let data = try #require(ZaloEngine.decodeDataURL(url))
+        #expect(String(decoding: data, as: UTF8.self) == svg)
+        #expect(NSImage(data: data)?.size == CGSize(width: 480, height: 480))
+    }
+
+    @Test func notADataURL() {
+        #expect(ZaloEngine.decodeDataURL("https://example.com/qr.png") == nil)
     }
 }
