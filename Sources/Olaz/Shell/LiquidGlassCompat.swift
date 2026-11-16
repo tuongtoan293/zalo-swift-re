@@ -63,7 +63,8 @@ private struct GlassFallback<S: Shape>: ViewModifier {
             .background {
                 ZStack {
                     shape.fill(.regularMaterial)
-                    if let tint = glass.tint { shape.fill(tint) }
+                    // Kính nhuộm vẫn để lộ material bên dưới, nên không phủ màu đặc.
+                    if let tint = glass.tint { shape.fill(tint.opacity(0.75)) }
                 }
             }
             .overlay { shape.stroke(.white.opacity(0.18), lineWidth: 0.5) }
@@ -208,7 +209,10 @@ struct OlazToolbarSpacer: ToolbarContent {
     }
 }
 
-extension ToolbarContent {
+// Gắn vào `ToolbarItem` chứ không vào `ToolbarContent`: SDK 26 có thể chỉ khai báo `sharedBackgroundVisibility`
+// trên `CustomizableToolbarContent`, và bản gốc gọi nó đúng trên `ToolbarItem(placement:)`. Còn trong SDK 15.5,
+// `ToolbarItem` chỉ là `CustomizableToolbarContent` khi `ID == String`, nên không gắn vào protocol đó được.
+extension ToolbarItem {
     /// Thay cho `.sharedBackgroundVisibility(.hidden)`. macOS 15 không có nền chung quanh mục nên không cần ẩn.
     @ToolbarContentBuilder
     func olazHideSharedBackground() -> some ToolbarContent {

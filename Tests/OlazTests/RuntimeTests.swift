@@ -160,6 +160,12 @@ import AppKit
         #expect(NSImage(data: data)?.size == CGSize(width: 480, height: 480))
     }
 
+    @Test func percentEncodedBytesAndUppercaseScheme() {
+        #expect(ZaloEngine.decodeDataURL("data:application/octet-stream,%00%FFa") == Data([0x00, 0xFF, 0x61]))
+        #expect(ZaloEngine.decodeDataURL("DATA:text/plain;BASE64,AAE=") == Data([0x00, 0x01]))
+        #expect(ZaloEngine.decodeDataURL("data:text/plain,%G1") == nil)
+    }
+
     @Test func notADataURL() {
         #expect(ZaloEngine.decodeDataURL("https://example.com/qr.png") == nil)
     }

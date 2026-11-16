@@ -523,12 +523,20 @@ final class ZaloEngine {
     }
 
     static func decodeDataURL(_ url: String) -> Data? {
-        guard url.hasPrefix("data:"), let comma = url.firstIndex(of: ",") else { return nil }
-        let payload = String(url[url.index(after: comma)...])
-        if url[..<comma].hasSuffix(";base64") { return Data(base64Encoded: payload) }
+        guard url.prefix(5).lowercased() == "data:", let comma = url.firstIndex(of: ",") else { return nil }
+        let payload = url[url.index(after: comma)...]
+        if url[..<comma].lowercased().hasSuffix(";base64") { return Data(base64Encoded: String(payload)) }
         // QR mà trang tự sinh (`T()` trong login-startup, dùng cho QR2 sau -20) là
         // `data:image/svg+xml;utf8,<SVG đã percent-encode>`, không phải base64. Giải sai thì QR2
         // không bao giờ hiện, màn vẫn giữ QR1 đã dùng và điện thoại báo "Mã QR không hợp lệ".
-        return payload.removingPercentEncoding.map { Data($0.utf8) }
+        // Giải %XX thẳng ra byte để giữ đúng cả nội dung không phải UTF-8.
+        var bytes = Data()
+        var it = payload.utf8.makeIterator()
+        while let b = it.next() {
+            guard b == UInt8(ascii: "%") else { bytes.append(b); continue }
+            guard let h = it.next(), let l = it.next(), let v = UInt8(String(decoding: [h, l], as: UTF8.self), radix: 16) else { return nil }
+            bytes.append(v)
+        }
+        return bytes
     }
 }
