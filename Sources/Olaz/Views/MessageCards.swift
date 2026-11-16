@@ -263,9 +263,13 @@ private struct LocationMap: View {
                                             span: MKCoordinateSpan(latitudeDelta: 0.012, longitudeDelta: 0.012))
         options.size = CGSize(width: 260, height: 150)
         options.showsBuildings = true
-        guard let result = try? await MKMapSnapshotter(options: options).start() else { return }
-        Self.cache.setObject(result.image, forKey: key)
-        snapshot = result.image
+        // SDK 15: Snapshot chưa Sendable nên không await `start()` được; lấy ảnh trong completion handler.
+        let result: SendableImage? = await withCheckedContinuation { done in
+            MKMapSnapshotter(options: options).start { snap, _ in done.resume(returning: snap.map { SendableImage(image: $0.image) }) }
+        }
+        guard let image = result?.image else { return }
+        Self.cache.setObject(image, forKey: key)
+        snapshot = image
     }
 }
 

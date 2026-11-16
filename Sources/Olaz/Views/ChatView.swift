@@ -37,7 +37,7 @@ struct ChatView: View {
                     } actions: {
                         if engine.canStartTransfer {
                             Button("Đồng bộ tin nhắn", systemImage: "iphone.and.arrow.forward") { engine.startTransfer() }
-                                .buttonStyle(.glassProminent)
+                                .olazGlassProminentButtonStyle()
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -55,10 +55,10 @@ struct ChatView: View {
             }
         }
         .background { ChatWallpaperBackground() }
-        .safeAreaBar(edge: .top, spacing: 0) {
+        .olazSafeAreaBar(edge: .top, spacing: 0) {
             PinnedBar(conversationId: id, open: openPin)
         }
-        .safeAreaBar(edge: .bottom, spacing: 0) {
+        .olazSafeAreaBar(edge: .bottom, spacing: 0) {
             ChatComposer(
                 name: conversation.displayName,
                 conversationId: id,
@@ -88,12 +88,12 @@ struct ChatView: View {
                 header(subtitle: subtitle(last: loaded?.last))
                     .frame(maxWidth: max(0, columnWidth - Self.toolbarButtonsRoom), alignment: .leading)
             }
-            .sharedBackgroundVisibility(.hidden)
-            ToolbarSpacer(.flexible, placement: .primaryAction)
+            .olazHideSharedBackground()
+            OlazToolbarSpacer(.flexible, placement: .primaryAction)
             ToolbarItemGroup(placement: .primaryAction) {
                 ChatCallButtons(conversation: conversation)
             }
-            ToolbarSpacer(.fixed, placement: .primaryAction)
+            OlazToolbarSpacer(.fixed, placement: .primaryAction)
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
                     shell.toggleInspector()
@@ -352,8 +352,8 @@ private struct MessageList: View {
             // Only the initial offset is anchored; later size changes must not yank the view.
             .defaultScrollAnchor(.bottom, for: .initialOffset)
             .scrollPosition(id: $topId, anchor: .top)
-            .scrollEdgeEffectStyle(.hard, for: .top)
-            .scrollEdgeEffectStyle(.soft, for: .bottom)
+            .olazScrollEdgeEffectStyle(.hard, for: .top)
+            .olazScrollEdgeEffectStyle(.soft, for: .bottom)
             .onScrollGeometryChange(for: Metrics.self) { geo in
                 Metrics(top: geo.contentOffset.y + geo.contentInsets.top,
                         fromBottom: geo.contentSize.height - geo.visibleRect.maxY,
@@ -422,7 +422,7 @@ private struct MessageList: View {
                     } label: {
                         Image(systemName: "chevron.down").font(.system(size: 13, weight: .bold))
                     }
-                    .buttonStyle(.glass)
+                    .olazGlassButtonStyle()
                     .buttonBorderShape(.circle)
                     .padding(14)
                     .transition(.scale.combined(with: .opacity))
@@ -465,7 +465,7 @@ private struct DaySeparator: View {
         .font(.system(size: 11))
         .foregroundStyle(.secondary)
         .padding(.horizontal, 11).padding(.vertical, 4)
-        .glassEffect(.regular, in: Capsule())
+        .olazGlass(.regular, in: Capsule())
         .frame(maxWidth: .infinity)
         .padding(.top, 14).padding(.bottom, 6)
         .accessibilityElement(children: .combine)
