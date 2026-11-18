@@ -76,6 +76,41 @@ struct ForwardRequest: Identifiable, Equatable {
     var message: ChatMessage
 }
 
+/// Bảng "Trích xuất chữ và mã QR" mở ở chế độ nào. Người dùng chọn ngay từ menu / nút ngoài, không phải chọn lại trong bảng.
+enum TextExtractionMode: Equatable, Sendable, CaseIterable {
+    /// Nhận dạng cả ảnh ngay khi mở; kết quả là phần chính, ảnh xem trước thu nhỏ, gập lại được.
+    case wholeImage
+    /// Ảnh hiện sẵn với con trỏ chọn vùng; kéo thả là nhận dạng vùng đó.
+    case region
+
+    /// Mở bảng là chạy nhận dạng luôn (cả ảnh), hay đợi người dùng kéo chọn vùng.
+    var scansOnOpen: Bool { self == .wholeImage }
+
+    /// Tên mục menu chuột phải của bong bóng ảnh.
+    var menuTitle: String {
+        switch self {
+        case .wholeImage: "Trích xuất cả ảnh"
+        case .region: "Trích xuất vùng chọn"
+        }
+    }
+
+    /// SF Symbol của mục menu và nút trên thanh trình xem ảnh (đều có từ macOS 11).
+    var symbol: String {
+        switch self {
+        case .wholeImage: "text.viewfinder"
+        case .region: "crop"
+        }
+    }
+
+    /// Tooltip / nhãn trợ năng của nút trên thanh trình xem ảnh.
+    var help: String {
+        switch self {
+        case .wholeImage: "Trích xuất chữ và mã QR trong cả ảnh"
+        case .region: "Chọn một vùng trên ảnh để trích xuất chữ và mã QR"
+        }
+    }
+}
+
 /// "Trích xuất chữ": ảnh trong tin nhắn cần nhận dạng chữ (OCR). Ảnh được lấy lại theo đúng đường của "Copy hình ảnh"
 /// (`photoData`), nên không cần giữ ảnh đã giải mã ở đây.
 struct TextExtractionRequest: Identifiable, Equatable {
@@ -85,6 +120,8 @@ struct TextExtractionRequest: Identifiable, Equatable {
     var url: URL?
     /// Ảnh mã hóa đầu cuối: byte trên CDN là bản mã, chỉ bản tải chính thức (đã giải mã) đọc được.
     var encrypted: Bool
+    /// Chế độ lúc mở bảng.
+    var mode: TextExtractionMode = .wholeImage
 }
 
 /// One pin of a conversation (official group board topic / 1:1 pin topic), newest first.
@@ -214,11 +251,12 @@ extension ZaloEngine {
 
     // MARK: Trích xuất chữ
 
-    /// Mở bảng "Trích xuất chữ" cho một tin nhắn ảnh (menu chuột phải của bong bóng).
-    func requestTextExtraction(_ message: ChatMessage) {
+    /// Mở bảng "Trích xuất chữ và mã QR" cho một tin nhắn ảnh (menu chuột phải của bong bóng), ở chế độ `mode`.
+    func requestTextExtraction(_ message: ChatMessage, mode: TextExtractionMode) {
         guard case .photo(let url, _, _) = message.kind else { return }
         textExtraction = TextExtractionRequest(conversationId: message.conversationId, messageId: message.id, url: url,
-                                               encrypted: message.isE2EE || url?.query?.contains("e2esession") == true)
+                                               encrypted: message.isE2EE || url?.query?.contains("e2esession") == true,
+                                               mode: mode)
     }
 
     // MARK: Chia sẻ

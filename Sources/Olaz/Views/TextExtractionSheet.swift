@@ -6,8 +6,11 @@ import AppKit
 // Mở từ menu chuột phải của bong bóng ảnh (qua `engine.textExtraction`, trình bày ở `messageActionPresenter`) và từ nút
 // trên thanh trên cùng của trình xem ảnh.
 //
-// Mở bảng KHÔNG tự nhận dạng: ảnh hiện vừa khung ở trên, người dùng kéo chọn một vùng (thả chuột là nhận dạng vùng đó) hoặc
-// bấm "Nhận dạng cả ảnh". Vùng được cắt từ ảnh gốc (RegionMapping.swift) nên ảnh to không phải quét cả ảnh.
+// Hai chế độ, chọn từ ngoài (menu / nút trình xem) và truyền vào qua `request.mode`:
+// * `.wholeImage`: nhận dạng cả ảnh ngay khi mở; kết quả là phần chính, ảnh xem trước nhỏ ở trên, gập lại được, kèm nút
+//   phụ "Chọn vùng".
+// * `.region`: ảnh hiện vừa khung, người dùng kéo chọn một vùng (thả chuột là nhận dạng vùng đó). Vùng được cắt từ ảnh gốc
+//   (RegionMapping.swift) nên ảnh to không phải quét cả ảnh.
 
 /// Bảng: ảnh xem trước để chọn vùng; dưới là các mã đọc được (sao chép, mở link http/https khi người dùng bấm) và chữ với
 /// picker bộ lọc.
@@ -40,8 +43,17 @@ struct TextExtractionSheet: View {
         case failed(String)
     }
 
+    init(request: TextExtractionRequest) {
+        self.request = request
+        _mode = State(initialValue: request.mode)
+    }
+
     @Environment(ZaloEngine.self) private var engine
     @Environment(\.dismiss) private var dismiss
+    /// Chế độ hiện tại: bắt đầu bằng `request.mode`, đổi được bằng nút phụ "Chọn vùng" / "Quét cả ảnh".
+    @State private var mode: TextExtractionMode
+    /// Chế độ cả ảnh: ảnh xem trước nhỏ đang mở hay đã gập.
+    @State private var previewExpanded = true
     @State private var loadState = LoadState.loading
     @State private var attempt = 0
     @State private var source: TextRecognizer.ScanSource?
@@ -103,14 +115,60 @@ struct TextExtractionSheet: View {
             }
         case .ready:
             if let preview, let source {
-                VSplitView {
-                    previewPane(preview, pixels: source.pixelSize)
-                        .frame(minHeight: 220, idealHeight: 380, maxHeight: .infinity)
-                    results
-                        .frame(minHeight: 160, idealHeight: 280, maxHeight: .infinity)
+                switch mode {
+                case .region:
+                    VSplitView {
+                        previewPane(preview, pixels: source.pixelSize)
+                            .frame(minHeight: 220, idealHeight: 380, maxHeight: .infinity)
+                        results
+                            .frame(minHeight: 160, idealHeight: 280, maxHeight: .infinity)
+                    }
+                case .wholeImage:
+                    VStack(spacing: 0) {
+                        wholeImagePreview(preview)
+                        Divider()
+                        results.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
                 }
             }
         }
+    }
+
+    // MARK: Chế độ cả ảnh
+
+    /// Dải trên cùng: nút gập ảnh xem trước, nút phụ "Chọn vùng", và ảnh nhỏ (không chọn vùng được ở đây).
+    private func wholeImagePreview(_ image: NSImage) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Button {
+                    withAnimation(.snappy) { previewExpanded.toggle() }
+                } label: {
+                    Label("Ảnh xem trước", systemImage: previewExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityValue(previewExpanded ? "Đang mở" : "Đã gập")
+                Spacer(minLength: 8)
+                Button("Chọn vùng", systemImage: TextExtractionMode.region.symbol) {
+                    switchMode(.region)
+                }
+                .olazGlassButtonStyle()
+                .controlSize(.small)
+                .help(TextExtractionMode.region.help)
+            }
+            if previewExpanded {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: .infinity, maxHeight: 150)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .transition(.opacity)
+                    .accessibilityLabel("Ảnh xem trước")
+            }
+        }
+        .padding(.horizontal, 16).padding(.vertical, 10)
     }
 
     // MARK: Ảnh xem trước, chọn vùng
@@ -128,15 +186,17 @@ struct TextExtractionSheet: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 Spacer(minLength: 8)
+                // Nút phụ, không nổi bật: chế độ chính ở đây là kéo chọn vùng.
+                Button("Quét cả ảnh") { switchMode(.wholeImage) }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+                    .help(TextExtractionMode.wholeImage.help)
                 if selection != nil {
                     Button("Bỏ chọn", systemImage: "xmark") { clearSelection() }
                         .olazGlassButtonStyle()
                         .controlSize(.small)
                 }
-                Button(target == nil ? "Nhận dạng cả ảnh" : "Cả ảnh", systemImage: "text.viewfinder") { scanWholeImage() }
-                    .olazGlassButtonStyle()
-                    .controlSize(.small)
-                    .disabled(target != nil && target?.region == nil && scanState != .idle)
             }
         }
         .padding(12)
@@ -186,7 +246,6 @@ struct TextExtractionSheet: View {
         if let selection, let rect = RegionMapping.pixelRect(normalized: selection, imagePixels: pixels) {
             return "Vùng \(Int(rect.width))×\(Int(rect.height)) px · kéo lại để chọn vùng khác"
         }
-        if target != nil { return "Cả ảnh \(Int(pixels.width))×\(Int(pixels.height)) px · kéo để chọn một vùng" }
         return "Kéo để chọn vùng cần trích xuất"
     }
 
@@ -195,7 +254,7 @@ struct TextExtractionSheet: View {
     @ViewBuilder private var results: some View {
         switch scanState {
         case .idle:
-            Text("Chọn một vùng trên ảnh, hoặc bấm “Nhận dạng cả ảnh”.")
+            Text("Kéo chọn một vùng trên ảnh để nhận dạng.")
                 .font(.system(size: 12.5))
                 .foregroundStyle(.tertiary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -365,6 +424,7 @@ struct TextExtractionSheet: View {
             // `size: .zero`: NSImage lấy kích thước pixel của CGImage.
             preview = NSImage(cgImage: decoded.cgImage, size: .zero)
             loadState = .ready
+            if mode.scansOnOpen { startScan(region: nil) }
         } catch {
             guard !Task.isCancelled else { return }
             loadState = .failed("Không đọc được hình ảnh này.")
@@ -377,9 +437,11 @@ struct TextExtractionSheet: View {
         target = ScanTarget(id: scanCounter, region: region)
     }
 
-    private func scanWholeImage() {
-        selection = nil
-        startScan(region: nil)
+    /// Đổi chế độ trong bảng (nút phụ). Sang cả ảnh thì quét luôn; sang vùng thì bỏ kết quả cũ, đợi người dùng kéo.
+    private func switchMode(_ newMode: TextExtractionMode) {
+        mode = newMode
+        clearSelection()
+        if newMode.scansOnOpen { startScan(region: nil) }
     }
 
     private func clearSelection() {
