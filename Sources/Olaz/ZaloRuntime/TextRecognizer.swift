@@ -8,8 +8,19 @@ import Vision
 /// Concurrency (Swift 6, SDK 15): `CGImage`, `NSImage` và các kiểu `VN*` không Sendable, nên toàn bộ việc giải mã và
 /// nhận dạng chạy trong một hàm `nonisolated` đồng bộ ngoài main (`Task.detached`), không có closure nào viết trong ngữ cảnh
 /// `@MainActor` bị Vision gọi lại trên hàng đợi nền (đã từng crash EXC_BREAKPOINT vì kiểm actor). Chỉ `[String]` (từng
-/// dòng, `ScannedCode`) quay về main.
+/// dòng, `ScannedCode`) quay về main; ảnh nguồn đi qua lại trong `ScanSource`.
+///
+/// Chọn vùng: ảnh được giải mã một lần ở độ phân giải gốc (`decode`), rồi mỗi lượt quét CẮT `CGImage` theo vùng pixel
+/// (`RegionMapping.pixelRect`) trước khi thu nhỏ về `maxPixelSize`, nên chữ nhỏ trong một vùng của ảnh lớn vẫn giữ chi tiết.
+/// Không dùng `regionOfInterest`: nó vẫn nhận ảnh đã thu nhỏ của cả khung.
 enum TextRecognizer {
+    /// Ảnh nguồn đã giải mã (đúng chiều EXIF, độ phân giải gốc). `CGImage` bất biến sau khi tạo nên chia sẻ giữa các luồng
+    /// được; SDK 15 chưa đánh dấu nó Sendable nên bọc lại, giống `SendableImage` của MediaLoader.
+    struct ScanSource: @unchecked Sendable {
+        let cgImage: CGImage
+        var pixelSize: CGSize { CGSize(width: cgImage.width, height: cgImage.height) }
+    }
+
     /// Kết quả một lượt quét: chữ theo dòng và các mã đọc được.
     struct ImageScan: Equatable, Sendable {
         var lines: [String]
@@ -23,8 +34,10 @@ enum TextRecognizer {
 
     /// Ngôn ngữ muốn dùng, theo thứ tự ưu tiên. Mã tiếng Việt của Vision là "vi-VT" (không phải "vi-VN").
     static let preferredLanguages = ["vi-VT", "en-US"]
-    /// Cạnh dài nhất khi giải mã: đủ cho chữ nhỏ trong ảnh chụp màn hình, không giải mã ảnh 48 MP nguyên cỡ.
+    /// Cạnh dài nhất của ảnh đưa vào Vision (áp lên ảnh ĐÃ CẮT): đủ cho chữ nhỏ trong ảnh chụp màn hình.
     static let maxPixelSize = 4096
+    /// Cạnh dài nhất khi giải mã ảnh nguồn: gốc cho mọi ảnh Zalo thường gặp, chỉ chặn ảnh bất thường làm tràn bộ nhớ.
+    static let maxSourcePixelSize = 12_000
 
     /// Những ngôn ngữ trong `preferredLanguages` mà Vision trên máy này hỗ trợ (tra lúc chạy, không đoán theo SDK).
     /// Rỗng thì để Vision tự chọn mặc định.
@@ -39,19 +52,63 @@ enum TextRecognizer {
         return (try? request.supportedRecognitionLanguages()) ?? []
     }
 
-    /// Giải mã `data` (xoay đúng chiều EXIF, thu về `maxPixelSize`) rồi quét chữ và mã, ngoài main.
+    /// Giải mã `data` ở độ phân giải gốc, xoay đúng chiều EXIF, ngoài main.
+    static func decode(imageData data: Data) async throws -> ScanSource {
+        try await Task.detached(priority: .userInitiated) {
+            try decodeSync(imageData: data)
+        }.value
+    }
+
+    nonisolated static func decodeSync(imageData data: Data) throws -> ScanSource {
+        // Dùng lại bộ giải mã của MediaLoader (ImageIO, xoay theo EXIF).
+        guard let image = MediaLoader.decode(data, maxPixelSize: maxSourcePixelSize),
+              let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { throw Failure.undecodable }
+        return ScanSource(cgImage: cgImage)
+    }
+
+    /// Quét chữ và mã trong `region` (pixel, gốc trên trái, xem `RegionMapping`) hoặc cả ảnh khi nil, ngoài main.
+    static func scan(_ source: ScanSource, region: CGRect? = nil) async throws -> ImageScan {
+        try await Task.detached(priority: .userInitiated) {
+            try scanSync(source, region: region)
+        }.value
+    }
+
+    /// Cả ảnh từ byte: giải mã rồi quét.
     static func scan(imageData data: Data) async throws -> ImageScan {
         try await Task.detached(priority: .userInitiated) {
-            try scanSync(imageData: data)
+            try scanSync(decodeSync(imageData: data))
         }.value
     }
 
     /// Bản đồng bộ của `scan(imageData:)`. Gọi ngoài main.
     nonisolated static func scanSync(imageData data: Data) throws -> ImageScan {
-        // Dùng lại bộ giải mã của MediaLoader: xoay theo EXIF, thu nhỏ bằng ImageIO.
-        guard let image = MediaLoader.decode(data, maxPixelSize: maxPixelSize),
-              let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { throw Failure.undecodable }
-        return try scanSync(cgImage)
+        try scanSync(decodeSync(imageData: data))
+    }
+
+    /// Cắt theo `region` (nếu có), thu về `maxPixelSize`, rồi quét. Gọi ngoài main.
+    nonisolated static func scanSync(_ source: ScanSource, region: CGRect? = nil) throws -> ImageScan {
+        var image = source.cgImage
+        if let region {
+            // `CGImage.cropping(to:)` tính theo pixel, gốc ở góc TRÊN trái: cùng hệ với `RegionMapping.pixelRect`.
+            guard let cropped = image.cropping(to: region.integral) else { return ImageScan(lines: [], codes: []) }
+            image = cropped
+        }
+        return try scanSync(fitWithin(image, maxPixelSize: maxPixelSize))
+    }
+
+    /// Thu nhỏ để cạnh dài nhất không quá `maxPixelSize` (giữ tỉ lệ); ảnh đã đủ nhỏ thì trả nguyên.
+    nonisolated static func fitWithin(_ image: CGImage, maxPixelSize: Int) -> CGImage {
+        let longest = max(image.width, image.height)
+        guard longest > maxPixelSize else { return image }
+        let scale = Double(maxPixelSize) / Double(longest)
+        let width = max(1, Int((Double(image.width) * scale).rounded()))
+        let height = max(1, Int((Double(image.height) * scale).rounded()))
+        guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return image }
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage() ?? image
     }
 
     /// Quét đồng bộ trên luồng gọi: một `perform` cho cả hai request, chạy xong mới trả về; kết quả đọc thẳng từ
