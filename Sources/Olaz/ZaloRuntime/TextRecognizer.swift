@@ -2,13 +2,20 @@ import Foundation
 import CoreGraphics
 import Vision
 
-/// Nhận dạng chữ trong ảnh bằng Vision (`VNRecognizeTextRequest`, `.accurate`, có sửa theo ngôn ngữ).
+/// Nhận dạng chữ trong ảnh bằng Vision (`VNRecognizeTextRequest`, `.accurate`, có sửa theo ngôn ngữ), và trong cùng lượt
+/// đọc mã QR / mã vạch (`VNDetectBarcodesRequest`, mọi symbology máy hỗ trợ): một `perform([...])` trên cùng handler.
 ///
 /// Concurrency (Swift 6, SDK 15): `CGImage`, `NSImage` và các kiểu `VN*` không Sendable, nên toàn bộ việc giải mã và
 /// nhận dạng chạy trong một hàm `nonisolated` đồng bộ ngoài main (`Task.detached`), không có closure nào viết trong ngữ cảnh
 /// `@MainActor` bị Vision gọi lại trên hàng đợi nền (đã từng crash EXC_BREAKPOINT vì kiểm actor). Chỉ `[String]` (từng
-/// dòng) quay về main.
+/// dòng, `ScannedCode`) quay về main.
 enum TextRecognizer {
+    /// Kết quả một lượt quét: chữ theo dòng và các mã đọc được.
+    struct ImageScan: Equatable, Sendable {
+        var lines: [String]
+        var codes: [ScannedCode]
+    }
+
     enum Failure: Error, Equatable {
         /// Byte không giải mã được thành ảnh.
         case undecodable
@@ -32,36 +39,43 @@ enum TextRecognizer {
         return (try? request.supportedRecognitionLanguages()) ?? []
     }
 
-    /// Giải mã `data` (xoay đúng chiều EXIF, thu về `maxPixelSize`) rồi nhận dạng, ngoài main. Trả các dòng theo thứ tự đọc.
-    static func recognize(imageData data: Data) async throws -> [String] {
+    /// Giải mã `data` (xoay đúng chiều EXIF, thu về `maxPixelSize`) rồi quét chữ và mã, ngoài main.
+    static func scan(imageData data: Data) async throws -> ImageScan {
         try await Task.detached(priority: .userInitiated) {
-            try recognizeLines(imageData: data)
+            try scanSync(imageData: data)
         }.value
     }
 
-    /// Bản đồng bộ của `recognize(imageData:)`. Gọi ngoài main.
-    nonisolated static func recognizeLines(imageData data: Data) throws -> [String] {
+    /// Bản đồng bộ của `scan(imageData:)`. Gọi ngoài main.
+    nonisolated static func scanSync(imageData data: Data) throws -> ImageScan {
         // Dùng lại bộ giải mã của MediaLoader: xoay theo EXIF, thu nhỏ bằng ImageIO.
         guard let image = MediaLoader.decode(data, maxPixelSize: maxPixelSize),
               let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { throw Failure.undecodable }
-        return try recognizeLines(in: cgImage)
+        return try scanSync(cgImage)
     }
 
-    /// Nhận dạng đồng bộ trên luồng gọi: `perform` chạy xong mới trả về, kết quả đọc thẳng từ `request.results`
-    /// (không dùng completion handler).
-    nonisolated static func recognizeLines(in image: CGImage) throws -> [String] {
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = true
-        let languages = languages(supported: (try? request.supportedRecognitionLanguages()) ?? [])
-        if !languages.isEmpty { request.recognitionLanguages = languages }
+    /// Quét đồng bộ trên luồng gọi: một `perform` cho cả hai request, chạy xong mới trả về; kết quả đọc thẳng từ
+    /// `request.results` (không dùng completion handler).
+    nonisolated static func scanSync(_ image: CGImage) throws -> ImageScan {
+        let text = VNRecognizeTextRequest()
+        text.recognitionLevel = .accurate
+        text.usesLanguageCorrection = true
+        let languages = languages(supported: (try? text.supportedRecognitionLanguages()) ?? [])
+        if !languages.isEmpty { text.recognitionLanguages = languages }
+        let barcodes = VNDetectBarcodesRequest()
+        // Mọi loại máy hỗ trợ, tra lúc chạy (macOS 15.7.9: 24 loại, revision 4).
+        if let supported = try? barcodes.supportedSymbologies(), !supported.isEmpty { barcodes.symbologies = supported }
         let handler = VNImageRequestHandler(cgImage: image, orientation: .up, options: [:])
-        try handler.perform([request])
-        let pieces = (request.results ?? []).compactMap { observation -> TextPiece? in
+        try handler.perform([text, barcodes])
+        let pieces = (text.results ?? []).compactMap { observation -> TextPiece? in
             guard let text = observation.topCandidates(1).first?.string, !text.isEmpty else { return nil }
             return TextPiece(text: text, box: observation.boundingBox)
         }
-        return readingOrder(pieces)
+        let codes = (barcodes.results ?? []).compactMap { observation -> ScannedCode? in
+            guard let payload = observation.payloadStringValue else { return nil }
+            return ScannedCode(symbology: observation.symbology.rawValue, payload: payload)
+        }
+        return ImageScan(lines: readingOrder(pieces), codes: ScannedCode.unique(codes))
     }
 
     /// Một cụm chữ Vision trả về và khung của nó (toạ độ chuẩn hoá 0…1, gốc ở góc dưới trái).

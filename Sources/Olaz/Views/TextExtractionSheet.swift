@@ -139,7 +139,7 @@ struct TextExtractionSheet: View {
         }
         let start = Date()
         do {
-            let lines = try await TextRecognizer.recognize(imageData: data)
+            let lines = try await TextRecognizer.scan(imageData: data).lines
             guard !Task.isCancelled else { return }
             // Chỉ ghi số đo, không ghi nội dung chữ.
             EngineLog.shared.write("ocr \(data.count)B → \(lines.count) dòng, \(String(format: "%.2f", Date().timeIntervalSince(start))) s")
