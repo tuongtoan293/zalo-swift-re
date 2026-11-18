@@ -11,6 +11,23 @@
   const diag = (s) => { try { window.webkit.messageHandlers.zlog.postMessage('[adapter] ' + s); } catch {} };
   const page = location.pathname.split('/').pop();
 
+  // ---- cổng cho các vòng polling ----
+  // `__olazStoreRev` tăng mỗi khi state Redux của trang đổi tham chiếu (gắn trong `attach` bên dưới). Một vòng
+  // polling gọi `__olazGate(tên, msAnToàn)` trước khi dựng snapshot: chỉ chạy khi store đã đổi kể từ lượt trước
+  // của chính nó, hoặc đã quá `msAnToàn` (cho dữ liệu nằm ngoài Redux: tên bạn bè, cài đặt, unread-manager…).
+  // Chưa có store thì luôn chạy, như trước. Lúc rảnh store đứng yên nên các snapshot O(n) không chạy lại mỗi 1–3 s.
+  if (!window.__olazGate) {
+    window.__olazStoreRev = 0;
+    const seen = new Map();   // tên → {rev, at}
+    window.__olazGate = (name, safetyMs) => {
+      const now = Date.now();
+      const s = seen.get(name);
+      if (window.__zaloStore && s && s.rev === window.__olazStoreRev && now - s.at < safetyMs) return false;
+      seen.set(name, { rev: window.__olazStoreRev, at: now });
+      return true;
+    };
+  }
+
   // ---- webpack access: lets Swift observe official services directly ----
   // Pushing a probe chunk onto `webpackJsonp` (webpack 4 JSONP runtime) yields
   // `__webpack_require__`, whose module cache holds every loaded service.
@@ -35,16 +52,24 @@
     }
   };
   // Every registration in the official tsyringe container(s): {provider, options, instance}.
+  // Quét mọi export (gọi getter trên từng khoá) tốn ~30 ms mỗi lần đo được, mà transfer-adapter gọi mỗi 1,5 s.
+  // Nên giữ lại các container đã tìm và chỉ quét lại khi webpack nạp thêm module (chunk lazy). `_registryMap` là
+  // Map sống của container, nên đăng ký mới vẫn hiện ra khi đọc lại từ container đã giữ.
+  let diContainers = null, diModuleCount = -1, diReq = null;
   const diRegistrations = (req) => {
+    const count = Object.keys(req.c || {}).length;
+    if (!diContainers || req !== diReq || count !== diModuleCount) {
+      const found = new Set();
+      eachExport(req, (ex) => {
+        if (!ex || typeof ex !== 'object' || found.has(ex)) return;
+        const registry = ex._registry && ex._registry._registryMap;
+        if (typeof ex.resolve !== 'function' || !(registry instanceof Map)) return;
+        found.add(ex);
+      });
+      diContainers = [...found]; diModuleCount = count; diReq = req;
+    }
     const out = [];
-    const seen = new Set();
-    eachExport(req, (ex) => {
-      if (!ex || typeof ex !== 'object' || seen.has(ex)) return;
-      const registry = ex._registry && ex._registry._registryMap;
-      if (typeof ex.resolve !== 'function' || !(registry instanceof Map)) return;
-      seen.add(ex);
-      for (const regs of registry.values()) for (const r of regs || []) out.push(r);
-    });
+    for (const ex of diContainers) for (const regs of ex._registry._registryMap.values()) for (const r of regs || []) out.push(r);
     return out;
   };
   window.__zaloDI = diRegistrations;
@@ -116,6 +141,8 @@
       };
       const attach = (store) => {
         window.__zaloStore = store;
+        let lastState = store.getState();
+        store.subscribe(() => { const s = store.getState(); if (s !== lastState) { lastState = s; window.__olazStoreRev++; } });
         let lastUser = '';
         const publish = () => {
           const st = store.getState();
@@ -137,7 +164,7 @@
         if (convTimer) return;
         const regs = () => diRegistrations(req);
         const pick = (pred) => { for (const r of regs()) { const i = r.instance; if (i && typeof i === 'object') { try { if (pred(i)) return i; } catch {} } } return null; };
-        let modules = null, lastKey = '', requestedProfiles = new Set();
+        let modules = null, lastKey = '', requestedProfiles = new Set(), profilesAskedAt = 0;
         const loadModules = async () => {
           const io = pick((i) => typeof i.getFriendManagerModule === 'function');
           if (!io) return null;
@@ -249,11 +276,15 @@
           }
           // Unknown 1-1 names: ask the official friend module to fetch profiles once.
           const toFetch = missing.filter((id) => !requestedProfiles.has(id));
-          if (toFetch.length) { toFetch.forEach((id) => requestedProfiles.add(id)); safe(() => m.friends.getProfileFriendByIds(toFetch), null); }
+          if (toFetch.length) { profilesAskedAt = Date.now(); toFetch.forEach((id) => requestedProfiles.add(id)); safe(() => m.friends.getProfileFriendByIds(toFetch), null); }
           const key = JSON.stringify(rows);
           if (key !== lastKey) { lastKey = key; post({ page: 'main', conversations: rows }); }
         };
-        convTimer = setInterval(() => { publish().catch((e) => diag('conversations publish failed: ' + e)); }, 1500);
+        // Vừa yêu cầu tải hồ sơ (tên 1-1 còn thiếu, dữ liệu về ngoài Redux) thì giữ nhịp 1,5 s thêm 30 s.
+        convTimer = setInterval(() => {
+          if (!window.__olazGate('conversations', Date.now() - profilesAskedAt < 30000 ? 1500 : 10000)) return;
+          publish().catch((e) => diag('conversations publish failed: ' + e));
+        }, 1500);
         publish().catch(() => {});
       };
       if (!tryAttach()) { const t = setInterval(() => { if (tryAttach()) clearInterval(t); }, 500); }

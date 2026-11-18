@@ -248,7 +248,8 @@
     activity() { try { document.dispatchEvent(new Event('touchstart')); } catch {} },
   };
 
-  const t = setInterval(() => { try { publish(false); } catch (e) { diag('publish failed: ' + e); } }, 1500);
+  // Cài đặt đổi từ Swift đi qua publishSoon; vòng này chỉ chạy khi store đổi, hoặc 15 s một lần (__olazGate, state-adapter).
+  const t = setInterval(() => { if (!window.__olazGate('notification', 15000)) return; try { publish(false); } catch (e) { diag('publish failed: ' + e); } }, 1500);
   window.addEventListener('beforeunload', () => clearInterval(t));
   post({ kind: 'ready' });
   diag('shim installed');

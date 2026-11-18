@@ -203,7 +203,8 @@
     if (started || !resolve()) return;
     started = true;
     refreshRequests(false);
-    setInterval(() => { try { publish(); } catch (e) { diag('publish failed: ' + e); } }, 3000);
+    // Danh sách bạn bè/nhóm dựng lại O(n): chỉ khi store đổi, hoặc 15 s một lần (__olazGate, state-adapter).
+    setInterval(() => { if (!window.__olazGate('contacts', 15000)) return; try { publish(); } catch (e) { diag('publish failed: ' + e); } }, 3000);
     // Safety net behind the realtime friend-request events: a full server refresh every 3 minutes.
     setInterval(() => { refreshRequests(true); }, 180000);
     publish();
