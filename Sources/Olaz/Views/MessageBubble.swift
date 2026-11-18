@@ -265,7 +265,7 @@ struct MessageRow: View {
             }
         }
         .padding(.horizontal, 3).padding(.vertical, 3)
-        .glassEffect(.regular, in: Capsule())
+        .olazGlass(.regular, in: Capsule())
     }
 
     private func barButton(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {
@@ -348,6 +348,10 @@ struct MessageRow: View {
                 }
                 if case .photo = message.kind {
                     Button("Copy hình ảnh", systemImage: "photo.on.rectangle") { engine.copyPhoto(message) }
+                    // Đọc chữ ra cũng là sao chép, nên cùng chịu "Chặn chia sẻ".
+                    ForEach(TextExtractionMode.allCases, id: \.self) { mode in
+                        Button(mode.menuTitle, systemImage: mode.symbol) { engine.requestTextExtraction(message, mode: mode) }
+                    }
                 }
                 if let caption = message.caption {
                     Button("Copy chú thích", systemImage: "text.quote") { engine.copyText(caption, in: message.conversationId) }
@@ -651,7 +655,7 @@ private struct ReactionChips: View {
     @State private var showsDetail = false
 
     var body: some View {
-        GlassEffectContainer(spacing: 3) {
+        OlazGlassContainer(spacing: 3) {
             HStack(spacing: 3) {
                 ForEach(reactions) { r in
                     Button { showsDetail = true } label: {
@@ -662,7 +666,7 @@ private struct ReactionChips: View {
                             }
                         }
                         .padding(.horizontal, 7).padding(.vertical, 3)
-                        .glassEffect(r.includesMe ? Glass.regular.tint(ChatPalette.accent(accentStored).opacity(0.4)) : Glass.regular, in: Capsule())
+                        .olazGlass(r.includesMe ? OlazGlass.regular.tint(ChatPalette.accent(accentStored).opacity(0.4)) : OlazGlass.regular, in: Capsule())
                         .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
@@ -895,7 +899,12 @@ private final class VoicePlayer: ObservableObject {
     enum State { case idle, loading, playing, paused }
     @Published var state: State = .idle
     private var player: AVPlayer?
+    #if compiler(>=6.2)
     private var endObserver: NSObjectProtocol?
+    #else
+    // Swift 6.1 chưa có `isolated deinit`, deinit thường phải đọc được biến này.
+    nonisolated(unsafe) private var endObserver: NSObjectProtocol?
+    #endif
     private var loadTask: Task<Void, Never>?
 
     func toggle(_ url: URL) {
@@ -955,7 +964,11 @@ private final class VoicePlayer: ObservableObject {
         player = nil
     }
 
+    #if compiler(>=6.2)
     isolated deinit { removeObserver() }
+    #else
+    deinit { if let endObserver { NotificationCenter.default.removeObserver(endObserver) } }
+    #endif
 }
 
 private struct VoiceView: View {

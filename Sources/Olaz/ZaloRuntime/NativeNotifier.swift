@@ -169,7 +169,9 @@ final class NativeNotifier: NSObject, UNUserNotificationCenterDelegate {
     /// Drops the banners of a conversation the user has now opened.
     func clearDelivered(conversation id: String) {
         guard isAvailable, !id.isEmpty else { return }
-        UNUserNotificationCenter.current().getDeliveredNotifications { delivered in
+        // `@Sendable`: callback chạy trên hàng đợi nền của UserNotifications. SDK 26 đã đánh dấu sẵn; SDK 15 thì
+        // không, nên closure bị coi là thuộc main actor và Swift 6 dừng app ở phép kiểm actor lúc chạy.
+        UNUserNotificationCenter.current().getDeliveredNotifications { @Sendable delivered in
             let ids = delivered.filter { $0.request.content.threadIdentifier == id }.map(\.request.identifier)
             if !ids.isEmpty { UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ids) }
         }

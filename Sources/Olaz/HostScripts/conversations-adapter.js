@@ -125,7 +125,8 @@
     lastKey = key;
     post({ page: 'main', conversationExtras: snap });
   };
-  const timer = setInterval(() => publish(false), 1200);
+  // Hành động từ Swift gọi publish(true) ngay; vòng này chỉ chạy khi store đổi, hoặc 10 s một lần (__olazGate, state-adapter).
+  const timer = setInterval(() => { if (window.__olazGate('convExtras', 10000)) publish(false); }, 1200);
   setTimeout(() => publish(false), 300);
 
   const report = (ok, text) => { lastAction = { seq: ++actionSeq, ok, text }; publish(true); };

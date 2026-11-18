@@ -638,6 +638,9 @@ struct GHASH {
     }
 
     func digest() -> [UInt8] {
-        (0..<8).map { UInt8(truncatingIfNeeded: yh >> UInt64(56 - 8 * $0)) } + (0..<8).map { UInt8(truncatingIfNeeded: yl >> UInt64(56 - 8 * $0)) }
+        // Tách hai nửa ra: Swift 6.1 không suy được kiểu của cả biểu thức trong thời gian cho phép.
+        let high: [UInt8] = (0..<8).map { UInt8(truncatingIfNeeded: yh >> UInt64(56 - 8 * $0)) }
+        let low: [UInt8] = (0..<8).map { UInt8(truncatingIfNeeded: yl >> UInt64(56 - 8 * $0)) }
+        return high + low
     }
 }

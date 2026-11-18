@@ -243,9 +243,10 @@ actor MediaLoader {
             return try await join(key: (cache ? "i:" : "i!:") + key) { [self] in
                 do {
                     let data = try await self.data(for: url)
+                    // SDK 15: NSImage chưa Sendable, nên bọc lại trước khi rời Task.detached.
                     guard let decoded = await Task.detached(priority: .userInitiated, operation: {
-                        Self.decode(data, maxPixelSize: pixels)
-                    }).value else { throw LoadError.undecodable }
+                        Self.decode(data, maxPixelSize: pixels).map(SendableImage.init)
+                    }).value?.image else { throw LoadError.undecodable }
                     if cache {
                         let cost = Int(decoded.size.width * decoded.size.height) * 4
                         Self.memory.setObject(CachedImage(decoded), forKey: key as NSString, cost: cost)
@@ -274,8 +275,8 @@ actor MediaLoader {
                 do {
                     let data = try await self.data(for: url)
                     guard let image = await Task.detached(priority: .userInitiated, operation: {
-                        Self.decodeAnimated(data)
-                    }).value else {
+                        Self.decodeAnimated(data).map(SendableImage.init)
+                    }).value?.image else {
                         Self.memory.markStill(url)
                         return nil
                     }

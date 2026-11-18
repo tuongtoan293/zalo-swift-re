@@ -77,15 +77,20 @@ final class VideoPlayback {
         }
     }
 
+    /// SDK 15: `[AVAssetTrack]` chưa Sendable, nên đọc track ngoài main actor và chỉ trả về Bool.
+    private nonisolated static func hasVideoTrack(_ asset: AVURLAsset) async throws -> Bool {
+        try await !asset.loadTracks(withMediaType: .video).isEmpty
+    }
+
     private func load(_ asset: AVURLAsset, autoplay: Bool) {
         loadTask = Task { [weak self] in
             do {
                 guard try await asset.load(.isPlayable) else { throw CocoaError(.fileReadCorruptFile) }
                 let length = try await asset.load(.duration).seconds
-                let video = try await asset.loadTracks(withMediaType: .video)
+                let video = try await Self.hasVideoTrack(asset)
                 guard !Task.isCancelled, let self else { return }
                 duration = length.isFinite && length > 0 ? length : 0
-                hasVideo = !video.isEmpty
+                hasVideo = video
                 status = .ready
                 if !hasVideo { controlsVisible = true }
                 if autoplay { play() }
@@ -484,7 +489,7 @@ struct VideoPlayerView: View {
     // MARK: Control bar
 
     private var controlBar: some View {
-        GlassEffectContainer(spacing: 10) {
+        OlazGlassContainer(spacing: 10) {
             HStack(spacing: 10) {
                 ViewerIconButton(symbol: playSymbol, label: playLabel, help: playLabel + (playback.ended ? "" : " (Dấu cách)")) { playback.togglePlay() }
                 scrubber
@@ -537,7 +542,7 @@ struct VideoPlayerView: View {
         }
         .padding(.horizontal, 14)
         .frame(height: 34)
-        .glassEffect(.regular, in: Capsule())
+        .olazGlass(.regular, in: Capsule())
     }
 
     private var volumeControl: some View {
@@ -561,6 +566,6 @@ struct VideoPlayerView: View {
         }
         .padding(.horizontal, 12)
         .frame(height: 34)
-        .glassEffect(.regular, in: Capsule())
+        .olazGlass(.regular, in: Capsule())
     }
 }

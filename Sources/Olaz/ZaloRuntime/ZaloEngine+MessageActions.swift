@@ -76,6 +76,54 @@ struct ForwardRequest: Identifiable, Equatable {
     var message: ChatMessage
 }
 
+/// Bảng "Trích xuất chữ và mã QR" mở ở chế độ nào. Người dùng chọn ngay từ menu / nút ngoài, không phải chọn lại trong bảng.
+enum TextExtractionMode: Equatable, Sendable, CaseIterable {
+    /// Nhận dạng cả ảnh ngay khi mở; kết quả là phần chính, ảnh xem trước thu nhỏ, gập lại được.
+    case wholeImage
+    /// Ảnh hiện sẵn với con trỏ chọn vùng; kéo thả là nhận dạng vùng đó.
+    case region
+
+    /// Mở bảng là chạy nhận dạng luôn (cả ảnh), hay đợi người dùng kéo chọn vùng.
+    var scansOnOpen: Bool { self == .wholeImage }
+
+    /// Tên mục menu chuột phải của bong bóng ảnh.
+    var menuTitle: String {
+        switch self {
+        case .wholeImage: "Trích xuất cả ảnh"
+        case .region: "Trích xuất vùng chọn"
+        }
+    }
+
+    /// SF Symbol của mục menu và nút trên thanh trình xem ảnh (đều có từ macOS 11).
+    var symbol: String {
+        switch self {
+        case .wholeImage: "text.viewfinder"
+        case .region: "crop"
+        }
+    }
+
+    /// Tooltip / nhãn trợ năng của nút trên thanh trình xem ảnh.
+    var help: String {
+        switch self {
+        case .wholeImage: "Trích xuất chữ và mã QR trong cả ảnh"
+        case .region: "Chọn một vùng trên ảnh để trích xuất chữ và mã QR"
+        }
+    }
+}
+
+/// "Trích xuất chữ": ảnh trong tin nhắn cần nhận dạng chữ (OCR). Ảnh được lấy lại theo đúng đường của "Copy hình ảnh"
+/// (`photoData`), nên không cần giữ ảnh đã giải mã ở đây.
+struct TextExtractionRequest: Identifiable, Equatable {
+    let id = UUID()
+    var conversationId: String
+    var messageId: String
+    var url: URL?
+    /// Ảnh mã hóa đầu cuối: byte trên CDN là bản mã, chỉ bản tải chính thức (đã giải mã) đọc được.
+    var encrypted: Bool
+    /// Chế độ lúc mở bảng.
+    var mode: TextExtractionMode = .wholeImage
+}
+
 /// One pin of a conversation (official group board topic / 1:1 pin topic), newest first.
 struct PinnedItem: Identifiable, Equatable, Sendable {
     enum Kind: String, Sendable { case message, note, link, poll, reminder }
@@ -165,14 +213,7 @@ extension ZaloEngine {
         let conversation = message.conversationId
         Task {
             guard await copyAllowed(in: conversation) else { return }
-            var data: Data?
-            if case .file(let file) = await resolveMedia(conversationId: conversation, messageId: message.id, kind: .photo),
-               MediaLoader.isAllowedLocalFile(file) {
-                data = try? Data(contentsOf: file)
-            }
-            if data == nil, !message.isE2EE, let url, url.scheme == "https" {
-                data = try? await MediaLoader.shared.data(for: url)
-            }
+            let data = await photoData(conversationId: conversation, messageId: message.id, url: url, encrypted: message.isE2EE)
             guard let data, let image = NSImage(data: data) else {
                 CardActionCenter.shared.show("Không sao chép được hình ảnh. Hãy thử lại.", in: conversation)
                 return
@@ -183,11 +224,39 @@ extension ZaloEngine {
         }
     }
 
+    /// Byte gốc của ảnh trong tin nhắn, như bộ tải chính thức có: bản trên máy trước (`resolveMedia`), rồi CDN qua `MediaLoader`
+    /// (trúng URLCache khi ảnh đã hiện trong khung chat hay trình xem). Ảnh mã hóa đầu cuối không lấy từ CDN vì đó là bản mã.
+    /// Dùng chung cho "Copy hình ảnh" và "Trích xuất chữ".
+    func photoData(conversationId: String, messageId: String, url: URL?, encrypted: Bool) async -> Data? {
+        if case .file(let file) = await resolveMedia(conversationId: conversationId, messageId: messageId, kind: .photo),
+           MediaLoader.isAllowedLocalFile(file), let data = try? Data(contentsOf: file) {
+            return data
+        }
+        guard !encrypted, let url, url.scheme == "https" else { return nil }
+        return try? await MediaLoader.shared.data(for: url)
+    }
+
     private func copyAllowed(in conversationId: String) async -> Bool {
-        let answer = await raceTimeout(5) { [self] in JSBox(value: await evaluateActions("isProtected", [conversationId])) }
-        guard (answer?.value as? Bool) == true else { return true }
+        guard await isShareBlocked(conversationId) else { return true }
         CardActionCenter.shared.show("Trò chuyện này đã bật Chặn chia sẻ", in: conversationId)
         return false
+    }
+
+    /// "Chặn chia sẻ" đang bật ở hội thoại này (đọc mới từ client chính thức). Không trả lời trong 5 s thì coi như không chặn,
+    /// giống "Copy tin nhắn".
+    func isShareBlocked(_ conversationId: String) async -> Bool {
+        let answer = await raceTimeout(5) { [self] in JSBox(value: await evaluateActions("isProtected", [conversationId])) }
+        return (answer?.value as? Bool) == true
+    }
+
+    // MARK: Trích xuất chữ
+
+    /// Mở bảng "Trích xuất chữ và mã QR" cho một tin nhắn ảnh (menu chuột phải của bong bóng), ở chế độ `mode`.
+    func requestTextExtraction(_ message: ChatMessage, mode: TextExtractionMode) {
+        guard case .photo(let url, _, _) = message.kind else { return }
+        textExtraction = TextExtractionRequest(conversationId: message.conversationId, messageId: message.id, url: url,
+                                               encrypted: message.isE2EE || url?.query?.contains("e2esession") == true,
+                                               mode: mode)
     }
 
     // MARK: Chia sẻ
@@ -366,12 +435,14 @@ extension ZaloEngine {
     /// Another conversation opens: a picker or confirm of the previous one must not answer for it.
     func dropMessagePrompts() {
         forwardRequest = nil
+        textExtraction = nil
         messageConfirm = nil
     }
 
     /// Logout: nothing of the previous account may be asked, undone or shown in the next.
     func resetMessageActions() {
         forwardRequest = nil
+        textExtraction = nil
         messageConfirm = nil
         deleteUndo = nil
         pins = [:]

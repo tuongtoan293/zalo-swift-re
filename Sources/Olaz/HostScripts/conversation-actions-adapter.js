@@ -282,7 +282,7 @@
       safe(() => X.bus.subscribe((type) => { if (types.has(type)) schedule(100); }), null);
     }
   };
-  setInterval(publish, 8000);
+  setInterval(publish, 30000);   // lưới an toàn sau các sự kiện chính thức; mỗi lượt duyệt mọi hội thoại (~27 ms đo được)
   setInterval(() => { if (!lastKey || !ready()) publish(); }, 1000);   // until the services resolve and the hidden state is loaded
   setTimeout(publish, 500);
   const publishSoon = () => schedule(150);
