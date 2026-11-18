@@ -332,6 +332,8 @@ private struct MediaViewerContent: View {
     let state: MediaViewerState
     let item: MediaViewerItem
     @Environment(ZaloEngine.self) private var engine
+    /// "Trích xuất chữ" mở trên chính cửa sổ trình xem (sheet đi theo cửa sổ, đóng cùng khi trình xem tự đóng vì riêng tư).
+    @State private var textExtraction: TextExtractionRequest?
 
     /// The player's bars and the top bar fade together; photos keep the top bar.
     private var barsVisible: Bool { state.playback?.barsVisible ?? true }
@@ -342,6 +344,7 @@ private struct MediaViewerContent: View {
             WindowDragArea().frame(height: 36)
             topBar
         }
+        .sheet(item: $textExtraction) { TextExtractionSheet(request: $0) }
     }
 
     // MARK: Media
@@ -380,7 +383,13 @@ private struct MediaViewerContent: View {
             info
                 .onHover { state.playback?.setPointerOver("top", $0) }
             Spacer(minLength: 12)
-            if item.isPhoto { ZoomControls(zoom: state.zoom) }
+            if case .photo(let url, _, _, let encrypted) = item.media {
+                ViewerIconButton(symbol: "text.viewfinder", label: "Trích xuất chữ") {
+                    textExtraction = TextExtractionRequest(conversationId: item.conversationId, messageId: item.messageId,
+                                                           url: url, encrypted: encrypted)
+                }
+                ZoomControls(zoom: state.zoom)
+            }
         }
         .padding(.leading, state.titlebar.leading)
         .padding(.trailing, 16)

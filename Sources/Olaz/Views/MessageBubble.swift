@@ -348,6 +348,8 @@ struct MessageRow: View {
                 }
                 if case .photo = message.kind {
                     Button("Copy hình ảnh", systemImage: "photo.on.rectangle") { engine.copyPhoto(message) }
+                    // Đọc chữ ra cũng là sao chép, nên cùng chịu "Chặn chia sẻ".
+                    Button("Trích xuất chữ", systemImage: "text.viewfinder") { engine.requestTextExtraction(message) }
                 }
                 if let caption = message.caption {
                     Button("Copy chú thích", systemImage: "text.quote") { engine.copyText(caption, in: message.conversationId) }

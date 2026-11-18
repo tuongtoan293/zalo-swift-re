@@ -131,6 +131,8 @@ final class ZaloEngine {
     /// Message context-menu actions (ZaloEngine+MessageActions.swift): the "Chia sẻ" picker, a confirm they ask, the undo of the last
     /// "Xóa chỉ ở phía tôi", the pinned list of the open conversation.
     var forwardRequest: ForwardRequest?
+    /// "Trích xuất chữ" đang mở từ menu của bong bóng ảnh (TextExtractionSheet.swift).
+    var textExtraction: TextExtractionRequest?
     var messageConfirm: MessageActionConfirm?
     var deleteUndo: DeleteUndo?
     internal(set) var pins: [String: PinnedList] = [:]

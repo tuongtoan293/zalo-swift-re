@@ -244,6 +244,10 @@ private struct MessageActionPresenter: ViewModifier {
                                  set: { engine.forwardRequest = $0 })) { request in
                 ForwardSheet(request: request).cardNoticeOverlay()
             }
+            .sheet(item: Binding(get: { engine.textExtraction?.conversationId == conversationId ? engine.textExtraction : nil },
+                                 set: { engine.textExtraction = $0 })) { request in
+                TextExtractionSheet(request: request)
+            }
             // Answered only by its buttons (the dismissal binding must not answer first and turn an OK into a cancel).
             .alert(engine.messageConfirm?.title ?? "", isPresented: Binding(get: { engine.messageConfirm?.conversationId == conversationId }, set: { _ in }),
                    presenting: engine.messageConfirm) { confirm in
@@ -264,7 +268,7 @@ private struct MessageActionPresenter: ViewModifier {
 }
 
 extension View {
-    /// Hosts the forward picker, the confirms and the delete undo of message actions (attach once, to the chat).
+    /// Hosts the forward picker, "Trích xuất chữ", the confirms and the delete undo of message actions (attach once, to the chat).
     func messageActionPresenter(conversationId: String) -> some View {
         modifier(MessageActionPresenter(conversationId: conversationId))
     }
