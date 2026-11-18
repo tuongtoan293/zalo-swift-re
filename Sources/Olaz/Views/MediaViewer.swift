@@ -384,9 +384,15 @@ private struct MediaViewerContent: View {
                 .onHover { state.playback?.setPointerOver("top", $0) }
             Spacer(minLength: 12)
             if case .photo(let url, _, _, let encrypted) = item.media {
-                ViewerIconButton(symbol: "text.viewfinder", label: TextExtractionSheet.title) {
-                    textExtraction = TextExtractionRequest(conversationId: item.conversationId, messageId: item.messageId,
-                                                           url: url, encrypted: encrypted)
+                OlazGlassContainer(spacing: 8) {
+                    HStack(spacing: 8) {
+                        ForEach(TextExtractionMode.allCases, id: \.self) { mode in
+                            ViewerIconButton(symbol: mode.symbol, label: mode.help) {
+                                textExtraction = TextExtractionRequest(conversationId: item.conversationId, messageId: item.messageId,
+                                                                       url: url, encrypted: encrypted, mode: mode)
+                            }
+                        }
+                    }
                 }
                 ZoomControls(zoom: state.zoom)
             }
