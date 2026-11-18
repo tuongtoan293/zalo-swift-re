@@ -241,7 +241,10 @@ final class ZaloEngine {
             // Official `log`/`info` lines can carry message payloads: only warnings, errors and
             // Olaz's own adapter diagnostics reach the on-disk log, truncated.
             let official = line.hasPrefix("[log]") || line.hasPrefix("[info]")
-            if !official || line.contains("[adapter]") || line.contains("[chat]") || line.contains("[transfer]") {
+            // Bảng đo của timer-profiler.js chỉ có nhãn và số, không có dữ liệu người dùng: ghi đủ, không cắt.
+            if line.hasPrefix("[timers]") {
+                log.write("console " + line)
+            } else if !official || line.contains("[adapter]") || line.contains("[chat]") || line.contains("[transfer]") {
                 log.write("console " + String(line.prefix(300)))
             }
         }
